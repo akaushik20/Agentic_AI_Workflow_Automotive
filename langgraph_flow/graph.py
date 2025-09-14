@@ -4,7 +4,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 
 from langgraph.graph import StateGraph, END
-from state import initial_state
+from .state import initial_state
 
 from agents.battery_agent import BatteryInsightAgent
 from agents.service_planner_agent import ServicePlannerAgent
