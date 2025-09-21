@@ -4,3 +4,7 @@ streamlit
 scikit-learn
 matplotlib
 langgraph
+langchain-community
+pypdf
+sentence-transformers
+faiss-cpu
