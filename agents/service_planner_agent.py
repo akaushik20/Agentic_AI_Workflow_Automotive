@@ -1,4 +1,8 @@
 import pandas as pd
+import os
+from typing import Dict
+from langchain.vectorstores import FAISS
+from langchain.embeddings import HuggingFaceEmbeddings
 
 class ServicePlannerAgent:
 
@@ -9,6 +13,7 @@ class ServicePlannerAgent:
         """
         self.state = state
         self.insight = self.state.get('battery_insight', {})
+        self.rag_enabled = False
     
     def plan_service(self):
 
@@ -37,10 +42,95 @@ class ServicePlannerAgent:
         }
         return service_plan
     def plan(self):
+        # Step 1: Create baseline plan (rule-based)
         decision = self.plan_service()
-        self.state["service_plan"] = decision
+        print("Baseline Service Plan:")
+        print(decision)
+
+        # Step 2: Augment with service manual (RAG)
+        rag_find = self.query_service_manual(self.insight)
+        print("RAG Findings:")
+        print(rag_find)
+
+        # Step 3: Enhance plan with RAG insights
+        enhanced_plan = self.enhance_plan_with_rag(decision, rag_find)
+        print("Enhanced Service Plan:")
+
+        # Step 4: Update state
+        self.state["service_plan"] = enhanced_plan
+        self.state["rag_insights"] = rag_find
+        
         return self.state
     
+    def query_service_manual(self, battery_analysis: Dict) -> Dict:
+        """Query Tesla service manual using RAG"""
+        
+        # Build query from battery analysis
+        soh = battery_analysis.get('latest_soh', 100)
+        anomalies = battery_analysis.get('anomalies', [])
+        
+        query = f"""
+        Tesla battery at {soh}% State of Health.
+        Issues: {', '.join(anomalies) if anomalies else 'None'}.
+        What service procedures and ODIN routines are recommended?
+        """
+        
+        try:
+            # Define embeddings
+            embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+            # Retrieve relevant manual sections
+            vector_store = FAISS.load_local(
+                    "vector_index", 
+                    embeddings,
+                    allow_dangerous_deserialization=True
+                )
+            docs = vector_store.similarity_search(query, k=3)
+            
+            # Extract key information
+            procedures = []
+            odin_routines = []
+            
+            for doc in docs:
+                content = doc.page_content
+                
+                # Extract ODIN routines (Tesla diagnostic commands)
+                import re
+                routines = re.findall(r'PROC_[A-Z0-9_-]+', content)
+                odin_routines.extend(routines)
+                
+                # Extract procedure info
+                if 'SOH' in content or 'procedure' in content.lower():
+                    procedures.append({
+                        'section': doc.metadata.get('section', 'Unknown'),
+                        'summary': content[:200] + "..."
+                    })
+            
+            return {
+                'procedures': procedures[:2],  # Top 2 relevant procedures
+                'odin_routines': list(set(odin_routines))[:3],  # Top 3 unique routines
+                'manual_sections_found': len(docs)
+            }
+            
+        except Exception as e:
+            print(f"⚠️  RAG query failed: {e}")
+            return {'procedures': [], 'odin_routines': [], 'manual_sections_found': 0}
+
+    def enhance_plan_with_rag(self, baseline_plan: Dict, rag_insights: Dict) -> Dict:
+        """Enhance baseline plan with RAG insights"""
+        
+        # Create a copy to avoid modifying original
+        enhanced_plan = baseline_plan.copy()
+
+        # Add RAG information to plan
+        enhanced_plan.update({
+            'rag_enhanced': True,
+            'tesla_procedures': rag_insights.get('procedures', []),
+            'odin_routines': rag_insights.get('odin_routines', []),
+            'manual_sections_referenced': rag_insights.get('manual_sections_found', 0)
+        })
+
+        return enhanced_plan
+
 if __name__ == "__main__":
     mock_state = {
         "battery_insight": {
